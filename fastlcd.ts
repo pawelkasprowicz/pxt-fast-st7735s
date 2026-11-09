@@ -2,6 +2,8 @@
  * Fast ST7735S LCD + 23LC1024 SRAM
  * BBC micro:bit V2
  * Microsoft MakeCode
+ *
+ * Version: 0.2 - SPI buffer initialization fix
  */
 
 //% color=#177B8D icon="\uf108" block="Fast LCD"
@@ -59,16 +61,21 @@ namespace fastLCD {
     let frame = 0
     let initialized = false
 
-    let fillBuf = pins.createBuffer(CHUNK)
-    let readBuf = pins.createBuffer(CHUNK)
-    let dummyBuf = pins.createBuffer(CHUNK)
-    let rxBuf = pins.createBuffer(CHUNK)
+    // Bufory zostana utworzone dopiero w init().
+    let fillBuf: Buffer
+    let readBuf: Buffer
+    let dummyBuf: Buffer
+    let rxBuf: Buffer
 
     let dirty = false
-    let dx0 = W
-    let dy0 = H
+    let dx0 = 160
+    let dy0 = 128
     let dx1 = -1
     let dy1 = -1
+
+    // ========================================
+    // SPI
+    // ========================================
 
     function allOff() {
         pins.digitalWritePin(lcdCS, 1)
@@ -82,21 +89,36 @@ namespace fastLCD {
 
     function cmd(value: number) {
         allOff()
+
         pins.digitalWritePin(lcdDC, 0)
         pins.digitalWritePin(lcdCS, 0)
+
         pins.spiWrite(value)
+
         pins.digitalWritePin(lcdCS, 1)
     }
 
     function dat(value: number) {
         allOff()
+
         pins.digitalWritePin(lcdDC, 1)
         pins.digitalWritePin(lcdCS, 0)
+
         pins.spiWrite(value)
+
         pins.digitalWritePin(lcdCS, 1)
     }
 
-    function window(x: number, y: number, w: number, h: number) {
+    // ========================================
+    // LCD
+    // ========================================
+
+    function window(
+        x: number,
+        y: number,
+        w: number,
+        h: number
+    ) {
         speed(lcdHz)
 
         cmd(0x2A)
@@ -131,7 +153,14 @@ namespace fastLCD {
         pins.digitalWritePin(lcdCS, 1)
     }
 
-    function ramHeader(op: number, address: number) {
+    // ========================================
+    // SRAM
+    // ========================================
+
+    function ramHeader(
+        op: number,
+        address: number
+    ) {
         speed(ramHz)
         allOff()
 
@@ -143,7 +172,10 @@ namespace fastLCD {
         pins.spiWrite(address & 255)
     }
 
-    function ramWrite(address: number, data: Buffer) {
+    function ramWrite(
+        address: number,
+        data: Buffer
+    ) {
         ramHeader(0x02, address)
 
         if (data.length == CHUNK) {
@@ -156,7 +188,10 @@ namespace fastLCD {
         pins.digitalWritePin(ramCS, 1)
     }
 
-    function ramRead(address: number, data: Buffer) {
+    function ramRead(
+        address: number,
+        data: Buffer
+    ) {
         ramHeader(0x03, address)
 
         if (data.length == CHUNK) {
@@ -169,11 +204,20 @@ namespace fastLCD {
         pins.digitalWritePin(ramCS, 1)
     }
 
+    // ========================================
+    // FRAMEBUFFER
+    // ========================================
+
     function frameBase(): number {
         return frame * FRAME
     }
 
-    function mark(x: number, y: number, w: number, h: number) {
+    function mark(
+        x: number,
+        y: number,
+        w: number,
+        h: number
+    ) {
         dirty = true
 
         dx0 = Math.min(dx0, x)
@@ -191,7 +235,14 @@ namespace fastLCD {
         dy1 = -1
     }
 
-    function solidBuffer(buf: Buffer, color: number) {
+    // ========================================
+    // COLOR BUFFER
+    // ========================================
+
+    function solidBuffer(
+        buf: Buffer,
+        color: number
+    ) {
         let hi = (color >> 8) & 255
         let lo = color & 255
 
@@ -234,6 +285,10 @@ namespace fastLCD {
         }
     }
 
+    // ========================================
+    // CLIPPING
+    // ========================================
+
     function clip(
         x: number,
         y: number,
@@ -246,8 +301,17 @@ namespace fastLCD {
         let x1 = Math.min(W, x + w)
         let y1 = Math.min(H, y + h)
 
-        return [x0, y0, x1 - x0, y1 - y0]
+        return [
+            x0,
+            y0,
+            x1 - x0,
+            y1 - y0
+        ]
     }
+
+    // ========================================
+    // CONFIGURATION
+    // ========================================
 
     /**
      * Configure LCD and SRAM pins
@@ -282,7 +346,7 @@ namespace fastLCD {
     }
 
     /**
-     * LCD SPI speed
+     * Set LCD SPI speed
      */
     //% block="LCD SPI speed %value"
     export function setLCDSpeed(value: Speed) {
@@ -290,18 +354,34 @@ namespace fastLCD {
     }
 
     /**
-     * SRAM SPI speed
+     * Set SRAM SPI speed
      */
     //% block="SRAM SPI speed %value"
     export function setSRAMSpeed(value: Speed) {
         ramHz = value
     }
 
+    // ========================================
+    // INITIALIZATION
+    // ========================================
+
     /**
      * Initialize LCD and SRAM
      */
     //% block="initialize fast LCD"
     export function init() {
+
+        initialized = false
+
+        // Najwazniejsza poprawka:
+        // tworzymy bufory podczas init(),
+        // a nie podczas inicjalizacji namespace.
+
+        fillBuf = pins.createBuffer(CHUNK)
+        readBuf = pins.createBuffer(CHUNK)
+        dummyBuf = pins.createBuffer(CHUNK)
+        rxBuf = pins.createBuffer(CHUNK)
+
         allOff()
 
         pins.spiPins(mosi, miso, sck)
@@ -342,20 +422,27 @@ namespace fastLCD {
 
         initialized = true
         target = DrawTarget.LCD
+        frame = 0
 
         clearDirty()
     }
+
+    // ========================================
+    // DRAW TARGET
+    // ========================================
 
     /**
      * Select drawing destination
      */
     //% block="draw to %destination"
-    export function drawTo(destination: DrawTarget) {
+    export function drawTo(
+        destination: DrawTarget
+    ) {
         target = destination
     }
 
     /**
-     * Select SRAM framebuffer 0, 1 or 2
+     * Select SRAM framebuffer
      */
     //% block="SRAM frame %index"
     //% index.min=0 index.max=2
@@ -366,8 +453,12 @@ namespace fastLCD {
         clearDirty()
     }
 
+    // ========================================
+    // FILLED RECTANGLE
+    // ========================================
+
     /**
-     * Fill rectangle
+     * Draw filled rectangle
      */
     //% block="fill rectangle x %x y %y width %w height %h color %color"
     export function fillRect(
@@ -390,19 +481,34 @@ namespace fastLCD {
 
         if (target == DrawTarget.LCD) {
             window(x, y, w, h)
-            sendSolid(w * h * 2, color, false, 0)
+
+            sendSolid(
+                w * h * 2,
+                color,
+                false,
+                0
+            )
         } else {
             for (let row = 0; row < h; row++) {
                 let addr =
                     frameBase() +
                     ((y + row) * W + x) * 2
 
-                sendSolid(w * 2, color, true, addr)
+                sendSolid(
+                    w * 2,
+                    color,
+                    true,
+                    addr
+                )
             }
 
             mark(x, y, w, h)
         }
     }
+
+    // ========================================
+    // CLEAR
+    // ========================================
 
     /**
      * Clear LCD or SRAM framebuffer
@@ -413,12 +519,28 @@ namespace fastLCD {
 
         if (target == DrawTarget.LCD) {
             window(0, 0, W, H)
-            sendSolid(FRAME, color, false, 0)
+
+            sendSolid(
+                FRAME,
+                color,
+                false,
+                0
+            )
         } else {
-            sendSolid(FRAME, color, true, frameBase())
+            sendSolid(
+                FRAME,
+                color,
+                true,
+                frameBase()
+            )
+
             mark(0, 0, W, H)
         }
     }
+
+    // ========================================
+    // PIXEL
+    // ========================================
 
     /**
      * Draw a pixel
@@ -434,6 +556,10 @@ namespace fastLCD {
 
         fillRect(x, y, 1, 1, color)
     }
+
+    // ========================================
+    // LINE
+    // ========================================
 
     /**
      * Draw a line
@@ -473,6 +599,10 @@ namespace fastLCD {
         }
     }
 
+    // ========================================
+    // RECTANGLE
+    // ========================================
+
     /**
      * Draw rectangle outline
      */
@@ -488,12 +618,17 @@ namespace fastLCD {
 
         fillRect(x, y, w, 1, color)
         fillRect(x, y + h - 1, w, 1, color)
+
         fillRect(x, y, 1, h, color)
         fillRect(x + w - 1, y, 1, h, color)
     }
 
+    // ========================================
+    // CIRCLE
+    // ========================================
+
     /**
-     * Draw circle outline
+     * Draw a circle
      */
     //% block="circle x %cx y %cy radius %radius color %color"
     export function circle(
@@ -511,11 +646,13 @@ namespace fastLCD {
         while (x >= y) {
             pixel(cx + x, cy + y, color)
             pixel(cx + y, cy + x, color)
+
             pixel(cx - y, cy + x, color)
             pixel(cx - x, cy + y, color)
 
             pixel(cx - x, cy - y, color)
             pixel(cx - y, cy - x, color)
+
             pixel(cx + y, cy - x, color)
             pixel(cx + x, cy - y, color)
 
@@ -530,8 +667,12 @@ namespace fastLCD {
         }
     }
 
+    // ========================================
+    // SHOW FULL FRAME
+    // ========================================
+
     /**
-     * Show complete SRAM framebuffer
+     * Display complete SRAM framebuffer
      */
     //% block="show full SRAM frame"
     export function show() {
@@ -544,15 +685,23 @@ namespace fastLCD {
             offset < FRAME;
             offset += CHUNK
         ) {
-            ramRead(frameBase() + offset, readBuf)
+            ramRead(
+                frameBase() + offset,
+                readBuf
+            )
+
             lcdSend(readBuf)
         }
 
         clearDirty()
     }
 
+    // ========================================
+    // SHOW CHANGED REGION
+    // ========================================
+
     /**
-     * Show changed SRAM region
+     * Display changed SRAM area
      */
     //% block="show changed SRAM area"
     export function showChanged() {
@@ -584,6 +733,10 @@ namespace fastLCD {
 
         clearDirty()
     }
+
+    // ========================================
+    // RGB565
+    // ========================================
 
     /**
      * Convert RGB888 to RGB565
