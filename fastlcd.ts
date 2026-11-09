@@ -62,10 +62,11 @@ namespace fastLCD {
     let fillBuf = pins.createBuffer(CHUNK)
     let readBuf = pins.createBuffer(CHUNK)
     let dummyBuf = pins.createBuffer(CHUNK)
+    let rxBuf = pins.createBuffer(CHUNK)
 
     let dirty = false
-    let dx0 = 160
-    let dy0 = 128
+    let dx0 = W
+    let dy0 = H
     let dx1 = -1
     let dy1 = -1
 
@@ -120,7 +121,12 @@ namespace fastLCD {
         pins.digitalWritePin(lcdDC, 1)
         pins.digitalWritePin(lcdCS, 0)
 
-        pins.spiTransfer(data, null)
+        if (data.length == CHUNK) {
+            pins.spiTransfer(data, rxBuf)
+        } else {
+            let receive = pins.createBuffer(data.length)
+            pins.spiTransfer(data, receive)
+        }
 
         pins.digitalWritePin(lcdCS, 1)
     }
@@ -139,7 +145,14 @@ namespace fastLCD {
 
     function ramWrite(address: number, data: Buffer) {
         ramHeader(0x02, address)
-        pins.spiTransfer(data, null)
+
+        if (data.length == CHUNK) {
+            pins.spiTransfer(data, rxBuf)
+        } else {
+            let receive = pins.createBuffer(data.length)
+            pins.spiTransfer(data, receive)
+        }
+
         pins.digitalWritePin(ramCS, 1)
     }
 
@@ -149,10 +162,8 @@ namespace fastLCD {
         if (data.length == CHUNK) {
             pins.spiTransfer(dummyBuf, data)
         } else {
-            pins.spiTransfer(
-                pins.createBuffer(data.length),
-                data
-            )
+            let dummy = pins.createBuffer(data.length)
+            pins.spiTransfer(dummy, data)
         }
 
         pins.digitalWritePin(ramCS, 1)
@@ -167,6 +178,7 @@ namespace fastLCD {
 
         dx0 = Math.min(dx0, x)
         dy0 = Math.min(dy0, y)
+
         dx1 = Math.max(dx1, x + w - 1)
         dy1 = Math.max(dy1, y + h - 1)
     }
@@ -199,10 +211,17 @@ namespace fastLCD {
 
         while (bytes > 0) {
             let n = Math.min(bytes, CHUNK)
+            let data: Buffer
 
-            let data = n == CHUNK
-                ? fillBuf
-                : fillBuf.slice(0, n)
+            if (n == CHUNK) {
+                data = fillBuf
+            } else {
+                data = pins.createBuffer(n)
+
+                for (let i = 0; i < n; i++) {
+                    data[i] = fillBuf[i]
+                }
+            }
 
             if (toRam) {
                 ramWrite(address, data)
@@ -386,7 +405,7 @@ namespace fastLCD {
     }
 
     /**
-     * Clear display or SRAM framebuffer
+     * Clear LCD or SRAM framebuffer
      */
     //% block="clear color %color"
     export function clear(color: number) {
@@ -396,19 +415,13 @@ namespace fastLCD {
             window(0, 0, W, H)
             sendSolid(FRAME, color, false, 0)
         } else {
-            sendSolid(
-                FRAME,
-                color,
-                true,
-                frameBase()
-            )
-
+            sendSolid(FRAME, color, true, frameBase())
             mark(0, 0, W, H)
         }
     }
 
     /**
-     * Draw pixel
+     * Draw a pixel
      */
     //% block="pixel x %x y %y color %color"
     export function pixel(
@@ -416,11 +429,14 @@ namespace fastLCD {
         y: number,
         color: number
     ) {
+        if (x < 0 || x >= W) return
+        if (y < 0 || y >= H) return
+
         fillRect(x, y, 1, 1, color)
     }
 
     /**
-     * Draw line
+     * Draw a line
      */
     //% block="line x1 %x0 y1 %y0 x2 %x1 y2 %y1 color %color"
     export function line(
@@ -477,7 +493,7 @@ namespace fastLCD {
     }
 
     /**
-     * Draw circle
+     * Draw circle outline
      */
     //% block="circle x %cx y %cy radius %radius color %color"
     export function circle(
@@ -486,6 +502,8 @@ namespace fastLCD {
         radius: number,
         color: number
     ) {
+        if (radius < 0) return
+
         let x = radius
         let y = 0
         let err = 1 - x
@@ -513,7 +531,7 @@ namespace fastLCD {
     }
 
     /**
-     * Show full SRAM framebuffer
+     * Show complete SRAM framebuffer
      */
     //% block="show full SRAM frame"
     export function show() {
@@ -534,7 +552,7 @@ namespace fastLCD {
     }
 
     /**
-     * Show only changed SRAM area
+     * Show changed SRAM region
      */
     //% block="show changed SRAM area"
     export function showChanged() {
@@ -545,6 +563,11 @@ namespace fastLCD {
 
         let w = dx1 - dx0 + 1
         let h = dy1 - dy0 + 1
+
+        if (w <= 0 || h <= 0) {
+            clearDirty()
+            return
+        }
 
         window(x, y, w, h)
 
@@ -571,6 +594,10 @@ namespace fastLCD {
         g: number,
         b: number
     ): number {
+        r = Math.max(0, Math.min(255, r))
+        g = Math.max(0, Math.min(255, g))
+        b = Math.max(0, Math.min(255, b))
+
         return (
             ((r >> 3) << 11) |
             ((g >> 2) << 5) |
